@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>📂 Diário de Provas Aec</title>
+    <link rel="manifest" href="/manifest.json">
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: Arial, sans-serif; }
+        body { background: #f0f4f8; padding: 15px; }
+        .container { max-width: 700px; margin: auto; background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+        h1 { text-align: center; color: #2c3e50; margin-bottom: 15px; font-size: 20px; }
+        .aviso { background: #fff3cd; border-left: 5px solid #ffc107; padding: 8px; margin-bottom: 15px; font-size: 12px; color: #856404; }
+        label { display: block; margin: 10px 0 4px; font-weight: bold; color: #34495e; font-size: 14px; }
+        input, textarea { width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 6px; font-size: 15px; }
+        textarea { height: 80px; resize: vertical; }
+        .btn-row { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0; }
+        .btn {
+            padding: 10px 15px; border: none; border-radius: 6px; font-weight: bold; font-size: 13px;
+            cursor: pointer; transition: background 0.2s; display: inline-flex; align-items: center; gap: 5px;
+        }
+        .btn-blue { background: #007bff; color: white; }
+        .btn-red { background: #dc3545; color: white; }
+        .btn-green { background: #28a745; color: white; }
+        .btn-gray { background: #6c757d; color: white; }
+        .btn-yellow { background: #ffc107; color: #333; }
+        .btn:disabled { opacity: 0.6; cursor: not-allowed; }
+        .preview { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; padding: 10px; background: #f8f9fa; border-radius: 6px; min-height: 50px; align-items: center; }
+        .preview-item { position: relative; max-width: 120px; background: white; border-radius: 6px; padding: 5px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); text-align: center; font-size: 11px; }
+        .preview-item img { width: 100%; max-height: 80px; object-fit: cover; border-radius: 4px; }
+        .preview-item video { width: 110px; display: block; }
+        .preview-item audio { width: 220px; min-width: 220px; min-height: 40px; display: block; }
+        .preview-item .remove { position: absolute; top: -8px; right: -8px; background: #dc3545; color: white; border: none; border-radius: 50%; width: 20px; height: 20px; font-size: 12px; line-height: 18px; cursor: pointer; }
+        .save-row { display: flex; gap: 8px; margin-top: 15px; }
+        .save-row button { flex: 1; padding: 12px; font-size: 15px; }
+        .history { margin-top: 25px; }
+        .card { background: #f8f9fa; border-left: 4px solid #007bff; padding: 12px; border-radius: 6px; margin-bottom: 12px; }
+        .card .date { font-weight: bold; color: #007bff; margin-bottom: 4px; }
+        .card .desc { color: #333; margin-bottom: 6px; }
+        .card .links { color: #0066cc; word-break: break-all; }
+        .anexos-grid { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+        .anexo-box { background: #fff; border: 1px solid #ddd; border-radius: 6px; padding: 5px; text-align: center; max-width: 140px; position: relative; display: flex; flex-direction: column; align-items: center; }
+        .anexo-box img { width: 100%; max-height: 80px; object-fit: cover; border-radius: 4px; cursor: pointer; }
+        .anexo-box audio, .anexo-box video { width: 100%; min-width: 200px; min-height: 40px; display: block; }
+        .anexo-box .btn-download, .anexo-box .btn-share-anexo { font-size: 10px; padding: 3px 6px; margin-top: 3px; border: none; border-radius: 3px; cursor: pointer; }
+        .anexo-box .btn-download { background: #ffc107; color: #333; }
+        .anexo-box .btn-share-anexo { background: #007bff; color: white; }
+        .anexo-box .btn-row-anexo { display: flex; gap: 3px; margin-top: 4px; flex-wrap: wrap; justify-content: center; }
+        .card-actions { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+        .card-actions button { font-size: 12px; padding: 5px 10px; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>📂 Diário de Provas Aec</h1>
+    <div class="aviso">⚠️ Grave áudio ou tire foto. Depois salve e compartilhe com seu advogado.</div>
+
+    <label>📅 Data</label>
+    <input type="date" id="data">
+    <label>⏰ Hora</label>
+    <input type="time" id="hora">
+
+    <label>📝 Descrição</label>
+    <textarea id="descricao" placeholder="Detalhes do ocorrido..."></textarea>
+
+    <label>📎 Anexos (fotos, vídeos, áudios)</label>
+    <input type="file" id="input-arquivos" accept="image/*,audio/*,video/*" multiple style="display:none;">
+    <input type="file" id="input-camera" accept="image/*" capture="environment" style="display:none;">
+
+    <div class="btn-row">
+        <button class="btn btn-gray" id="btn-anexar">📁 Anexar</button>
+        <button class="btn btn-blue" id="btn-camera">📷 Tirar foto</button>
+        <button class="btn btn-red" id="btn-gravar">🎤 Gravar</button>
+        <button class="btn btn-yellow" id="btn-parar" style="display:none;">⏹️ Parar</button>
+    </div>
+    <div id="status-gravacao" style="font-size:12px; color:#dc3545; margin-bottom:5px;"></div>
+    <div class="preview" id="preview"></div>
+
+    <label>🔗 Links (nuvem)</label>
+    <textarea id="links" placeholder="Links de provas na nuvem..."></textarea>
+
+    <div class="save-row">
+        <button class="btn btn-green" id="btn-salvar">💾 Salvar</button>
+        <button class="btn btn-red" id="btn-limpar">🧹 Limpar</button>
+    </div>
+
+    <div class="history" id="history"></div>
+</div>
+
+<script>
+    // ---------- Armazenamento (localStorage) ----------
+    const STORAGE_KEY = 'diario_provas_v3';
+
+    function carregarAnotacoes() {
+        try {
+            const dados = localStorage.getItem(STORAGE_KEY);
+            if (!dados) return [];
+            const parsed = JSON.parse(dados);
+            return Array.isArray(parsed) ? parsed : [];
+        } catch (e) {
+            localStorage.removeItem(STORAGE_KEY);
+            return [];
+        }
+    }
+
+    function salvarAnotacoes(lista) {
+        try {
+            const json = JSON.stringify(lista);
+            localStorage.setItem(STORAGE_KEY, json);
+            return true;
+        } catch (e) {
+            if (e.name === 'QuotaExceededError' || e.code === 22 || e.message.includes('quota')) {
+                throw new Error('Armazenamento cheio. Remova anexos antigos no histórico.');
+            }
+            throw new Error('Erro ao acessar o armazenamento.');
+        }
+    }
+
+    // ---------- Estado atual ----------
+    let arquivosAtuais = []; // { nome, tipo, dadosBase64 }
+
+    // Elementos DOM
+    const inputArquivos = document.getElementById('input-arquivos');
+    const inputCamera = document.getElementById('input-camera');
+    const btnAnexar = document.getElementById('btn-anexar');
+    const btnCamera = document.getElementById('btn-camera');
+    const btnGravar = document.getElementById('btn-gravar');
+    const btnParar = document.getElementById('btn-parar');
+    const statusGravacao = document.getElementById('status-gravacao');
+    const previewDiv = document.getElementById('preview');
+    const btnSalvar = document.getElementById('btn-salvar');
+    const btnLimpar = document.getElementById('btn-limpar');
+    const historyDiv = document.getElementById('history');
+    const dataInput = document.getElementById('data');
+    const horaInput = document.getElementById('hora');
+    const descricaoInput = document.getElementById('descricao');
+    const linksInput = document.getElementById('links');
+
+    // ---------- Prévia ----------
+    function atualizarPreview() {
+        previewDiv.innerHTML = '';
+        if (arquivosAtuais.length === 0) {
+            previewDiv.innerHTML = '<span style="color:#888;">Nenhum anexo</span>';
+            return;
+        }
+        arquivosAtuais.forEach((arq, idx) => {
+            const div = document.createElement('div');
+            div.className = 'preview-item';
+            let elemento;
+            if (arq.tipo.startsWith('image/')) {
+                elemento = document.createElement('img');
+                elemento.src = arq.dadosBase64;
+            } else if (arq.tipo.startsWith('video/')) {
+                elemento = document.createElement('video');
+                elemento.src = arq.dadosBase64;
+                elemento.controls = true;
+                elemento.muted = true;
+            } else if (arq.tipo.startsWith('audio/')) {
+                elemento = document.createElement('audio');
+                elemento.src = arq.dadosBase64;
+                elemento.controls = true;
+            } else {
+                elemento = document.createElement('span');
+                elemento.textContent = '📄 ' + arq.nome;
+            }
+            div.appendChild(elemento);
+            const btnRem = document.createElement('button');
+            btnRem.className = 'remove';
+            btnRem.textContent = '×';
+            btnRem.onclick = () => { arquivosAtuais.splice(idx,1); atualizarPreview(); };
+            div.appendChild(btnRem);
+            previewDiv.appendChild(div);
+        });
+    }
+
+    function adicionarArquivo(nome, tipo, dadosBase64) {
+        arquivosAtuais.push({ nome, tipo, dadosBase64 });
+        atualizarPreview();
+    }
+
+    // ---------- Anexar e câmera ----------
+    btnAnexar.addEventListener('click', () => inputArquivos.click());
+    btnCamera.addEventListener('click', () => inputCamera.click());
+
+    inputArquivos.addEventListener('change', (e) => {
+        const files = Array.from(e.target.files);
+        if (!files.length) return;
+        files.forEach(file => {
+            const reader = new FileReader();
+            reader.onload = (ev) => adicionarArquivo(file.name, file.type, ev.target.result);
+            reader.readAsDataURL(file);
+        });
+        inputArquivos.value = '';
+    });
+
+    inputCamera.addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (ev) => adicionarArquivo('Foto_' + new Date().toISOString().slice(0,19).replace(/:/g,'-') + '.jpg', 'image/jpeg', ev.target.result);
+        reader.readAsDataURL(file);
+        inputCamera.value = '';
+    });
+
+    // ---------- Gravação com contador de tempo ----------
+    let mediaRecorder = null;
+    let audioChunks = [];
+    let streamGravacao = null;
+    let timerGravacao = null;
+    let segundos = 0;
+
+    function atualizarTempo() {
+        segundos++;
+        const mins = Math.floor(segundos / 60).toString().padStart(2, '0');
+        const secs = (segundos % 60).toString().padStart(2, '0');
+        statusGravacao.textContent = `🔴 Gravando ${mins}:${secs}`;
+    }
+
+    async function iniciarGravacao() {
+        if (!navigator.mediaDevices?.getUserMedia) {
+            alert('Gravação não suportada. Use o Chrome.');
+            return;
+        }
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            streamGravacao = stream;
+            mediaRecorder = new MediaRecorder(stream);
+            audioChunks = [];
+
+            mediaRecorder.ondataavailable = (e) => {
+                if (e.data.size > 0) audioChunks.push(e.data);
+            };
+
+            mediaRecorder.onstop = () => {
+                clearInterval(timerGravacao);
+                if (audioChunks.length === 0) {
+                    statusGravacao.textContent = '';
+                    return;
+                }
+                const blob = new Blob(audioChunks, { type: 'audio/webm' });
+                const reader = new FileReader();
+                reader.onload = (ev) => {
+                    adicionarArquivo('Gravação_' + new Date().toISOString().slice(0,19).replace(/:/g,'-') + '.webm', 'audio/webm', ev.target.result);
+                };
+                reader.readAsDataURL(blob);
+                stream.getTracks().forEach(t => t.stop());
+                btnGravar.style.display = 'inline-flex';
+                btnParar.style.display = 'none';
+                statusGravacao.textContent = '';
+                segundos = 0;
+            };
+
+            mediaRecorder.start();
+            btnGravar.style.display = 'none';
+            btnParar.style.display = 'inline-flex';
+            segundos = 0;
+            statusGravacao.textContent = '🔴 Gravando 00:00';
+            timerGravacao = setInterval(atualizarTempo, 1000);
+        } catch (erro) {
+            alert('Microfone bloqueado. Permita no navegador (ícone de cadeado na URL).');
+        }
+    }
+
+    function pararGravacao() {
+        if (mediaRecorder && mediaRecorder.state === 'recording') {
+            mediaRecorder.stop();
+        }
+    }
+
+    btnGravar.addEventListener('click', iniciarGravacao);
+    btnParar.addEventListener('click', pararGravacao);
+
+    // ---------- Salvar ----------
+    btnSalvar.addEventListener('click', () => {
+        const data = dataInput.value;
+        const hora = horaInput.value;
+        const descricao = descricaoInput.value.trim();
+        const links = linksInput.value.trim();
+
+        if (!data || !hora || !descricao) {
+            alert('Preencha data, hora e descrição.');
+            return;
+        }
+
+        btnSalvar.disabled = true;
+        btnSalvar.textContent = '⏳ Salvando...';
+
+        const novoItem = {
+            id: Date.now(),
+            data, hora, descricao, links,
+            arquivos: arquivosAtuais.slice()
+        };
+
+        setTimeout(() => {
+            try {
+                const lista = carregarAnotacoes();
+                lista.push(novoItem);
+                if (salvarAnotacoes(lista)) {
+                    limparFormulario();
+                    renderizarHistorico();
+                    alert('✅ Salvo!');
+                }
+            } catch (erro) {
+                alert('Erro ao salvar: ' + erro.message);
+                console.error(erro);
+            } finally {
+                btnSalvar.disabled = false;
+                btnSalvar.textContent = '💾 Salvar';
+            }
+        }, 50);
+    });
+
+    btnLimpar.addEventListener('click', limparFormulario);
+
+    function limparFormulario() {
+        arquivosAtuais = [];
+        atualizarPreview();
+        descricaoInput.value = '';
+        linksInput.value = '';
+        const agora = new Date();
+        dataInput.value = agora.toISOString().split('T')[0];
+        horaInput.value = agora.toTimeString().slice(0,5);
+    }
+
+    // ---------- Histórico ----------
+    function renderizarHistorico() {
+        const lista = carregarAnotacoes();
+        historyDiv.innerHTML = '<h3 style="margin-bottom:10px;">📋 Histórico</h3>';
+        if (lista.length === 0) {
+            historyDiv.innerHTML += '<p style="color:gray;">Nenhum registro.</p>';
+            return;
+        }
+
+        lista.reverse().forEach(item => {
+            const card = document.createElement('div');
+            card.className = 'card';
+
+            let html = `<div class="date">📅 ${item.data} às ⏰ ${item.hora}</div>`;
+            html += `<div class="desc"><strong>Ocorrência:</strong><br>${item.descricao.replace(/\n/g, '<br>')}</div>`;
+            if (item.links) {
+                html += `<div class="links"><strong>🔗 Links:</strong><br>${item.links.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank">$1</a>')}</div>`;
+            }
+
+            if (item.arquivos && item.arquivos.length > 0) {
+                html += '<div class="anexos-grid">';
+                item.arquivos.forEach(arq => {
+                    html += '<div class="anexo-box">';
+                    if (arq.tipo.startsWith('image/')) {
+                        html += `<img src="${arq.dadosBase64}" alt="${arq.nome}" onclick="window.open('${arq.dadosBase64}')" style="cursor:pointer;">`;
+                    } else if (arq.tipo.startsWith('video/')) {
+                        html += `<video src="${arq.dadosBase64}" controls muted></video>`;
+                    } else if (arq.tipo.startsWith('audio/')) {
+                        html += `<audio src="${arq.dadosBase64}" controls></audio>`;
+                    } else {
+                        html += `📄 ${arq.nome}`;
+                    }
+                    html += `<div class="btn-row-anexo">
+                                <button class="btn-download" onclick="baixarAnexo('${arq.nome}', '${arq.tipo}', '${arq.dadosBase64}')">⬇️ Baixar</button>
+                                <button class="btn-share-anexo" onclick="compartilharAnexoIndividual('${arq.nome}', '${arq.tipo}', '${arq.dadosBase64}')">📤 Compartilhar</button>
+                             </div>`;
+                    html += '</div>';
+                });
+                html += '</div>';
+            }
+
+            html += `<div class="card-actions">
+                        <button class="btn btn-blue" onclick="compartilharAnotacao(${item.id})">📤 Compartilhar texto</button>
+                        <button class="btn btn-gray" onclick="copiarAnotacao(${item.id})">📋 Copiar</button>
+                        <button class="btn btn-red" onclick="excluirAnotacao(${item.id})">🗑️ Excluir</button>
+                     </div>`;
+
+            card.innerHTML = html;
+            historyDiv.appendChild(card);
+        });
+    }
+
+    // ---------- Funções globais para histórico ----------
+    window.baixarAnexo = function(nome, tipo, dadosBase64) {
+        const byteString = atob(dadosBase64.split(',')[1]);
+        const ab = new ArrayBuffer(byteString.length);
+        const ia = new Uint8Array(ab);
+        for (let i = 0; i < byteString.length; i++) ia[i] = byteString.charCodeAt(i);
+        const blob = new Blob([ab], { type: tipo });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = nome;
+        a.click();
+        URL.revokeObjectURL(url);
+    };
+
+    window.compartilharAnexoIndividual = async function(nome, tipo, dadosBase64) {
+        try {
+            const byteString = atob(dadosBase64.split(',')[1]);
+            const ab = new ArrayBuffer(byteString.length);
+            const ia = new Uint8Array(ab);
+            for (let i = 0; i < byteString.length; i++) ia[i] = byteString.charCodeAt(i);
+            const blob = new Blob([ab], { type: tipo });
+            const file = new File([blob], nome, { type: tipo });
+
+            if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
+                await navigator.share({ files: [file], title: nome });
+            } else if (navigator.share) {
+                await navigator.share({ text: `Segue anexo: ${nome}` });
+            } else {
+                alert('Compartilhamento não suportado. Use o botão "Baixar" para salvar e enviar manualmente.');
+            }
+        } catch (e) {
+            if (e.name !== 'AbortError') {
+                alert('Não foi possível compartilhar este arquivo.');
+                console.error(e);
+            }
+        }
+    };
+
+    window.compartilharAnotacao = async function(id) {
+        const lista = carregarAnotacoes();
+        const anotacao = lista.find(a => a.id === id);
+        if (!anotacao) return;
+
+        let texto = `📅 ${anotacao.data} às ${anotacao.hora}\n${anotacao.descricao}`;
+        if (anotacao.links) texto += `\n🔗 ${anotacao.links}`;
+
+        if (navigator.share) {
+            try {
+                await navigator.share({ text: texto });
+            } catch (e) { }
+        } else {
+            alert('Compartilhamento indisponível. Use os botões "Compartilhar" individuais nos anexos para enviar mídia.');
+        }
+    };
+
+    window.copiarAnotacao = function(id) {
+        const lista = carregarAnotacoes();
+        const anotacao = lista.find(a => a.id === id);
+        if (!anotacao) return;
+        let texto = `📅 ${anotacao.data} às ${anotacao.hora}\n${anotacao.descricao}`;
+        if (anotacao.links) texto += `\n🔗 ${anotacao.links}`;
+        navigator.clipboard.writeText(texto).then(() => alert('Copiado!')).catch(() => alert('Erro ao copiar.'));
+    };
+
+    window.excluirAnotacao = function(id) {
+        if (!confirm('Excluir esta anotação?')) return;
+        const lista = carregarAnotacoes().filter(a => a.id !== id);
+        salvarAnotacoes(lista);
+        renderizarHistorico();
+    };
+
+    // ---------- Inicialização ----------
+    const agora = new Date();
+    dataInput.value = agora.toISOString().split('T')[0];
+    horaInput.value = agora.toTimeString().slice(0,5);
+    renderizarHistorico();
+</script>
+<script>
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js');
+  });
+}
+</script>
+</body>
+  </html>
