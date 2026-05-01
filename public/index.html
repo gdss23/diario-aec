@@ -261,55 +261,134 @@ inputCamera.addEventListener('change', async (e) => {
     inputCamera.value = '';
 });
 
-// ========== Gravação com formato compatível ==========
-let mediaRecorder = null, audioChunks = [], streamGravacao = null, timerGravacao = null, segundos = 0;
-
-function melhorMimeType() {
-    const types = ['audio/mp4', 'audio/ogg;codecs=opus', 'audio/webm;codecs=opus', 'audio/webm'];
-    for (const t of types) if (MediaRecorder.isTypeSupported(t)) return t;
-    return 'audio/webm'; // fallback
-}
+// ========== GRAVAÇÃO EM WAV (compatível com WhatsApp) ==========
+let audioContext = null;
+let scriptProcessor = null;
+let streamGravacao = null;
+let timerGravacao = null;
+let segundos = 0;
+let chunksWav = [];
 
 async function iniciarGravacao() {
-    if (!navigator.mediaDevices?.getUserMedia) { alert('Gravação não suportada. Use o Chrome.'); return; }
+    if (!navigator.mediaDevices?.getUserMedia) {
+        alert('Gravação não suportada. Use o Chrome.');
+        return;
+    }
     try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         streamGravacao = stream;
-        const mimeType = melhorMimeType();
-        mediaRecorder = new MediaRecorder(stream, { mimeType });
-        audioChunks = [];
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        const source = audioContext.createMediaStreamSource(stream);
+        // Cria um ScriptProcessorNode com buffer de 4096 amostras (mono)
+        scriptProcessor = audioContext.createScriptProcessor(4096, 1, 1);
+        chunksWav = [];
 
-        mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) audioChunks.push(e.data); };
-        mediaRecorder.onstop = () => {
-            clearInterval(timerGravacao);
-            if (!audioChunks.length) { statusGravacao.textContent = ''; return; }
-            const tipo = mediaRecorder.mimeType || 'audio/webm';
-            const ext = tipo.includes('mp4') ? 'm4a' : tipo.includes('ogg') ? 'ogg' : 'webm';
-            const blob = new Blob(audioChunks, { type: tipo });
-            const reader = new FileReader();
-            reader.onload = (ev) => adicionarArquivo(`Gravacao_${Date.now()}.${ext}`, tipo, ev.target.result);
-            reader.readAsDataURL(blob);
-            stream.getTracks().forEach(t => t.stop());
-            btnGravar.style.display = 'inline-flex';
-            btnParar.style.display = 'none';
-            statusGravacao.textContent = '';
-            segundos = 0;
+        scriptProcessor.onaudioprocess = (event) => {
+            const input = event.inputBuffer.getChannelData(0);
+            // Converte Float32Array para Int16Array (PCM 16-bit)
+            const buf16 = new Int16Array(input.length);
+            for (let i = 0; i < input.length; i++) {
+                let s = Math.max(-1, Math.min(1, input[i]));
+                buf16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+            }
+            chunksWav.push(buf16);
         };
 
-        mediaRecorder.start();
+        source.connect(scriptProcessor);
+        scriptProcessor.connect(audioContext.destination);
+
         btnGravar.style.display = 'none';
         btnParar.style.display = 'inline-flex';
         segundos = 0;
         statusGravacao.textContent = '🔴 Gravando 00:00';
         timerGravacao = setInterval(() => {
             segundos++;
-            const m = Math.floor(segundos/60).toString().padStart(2,'0'), s = (segundos%60).toString().padStart(2,'0');
+            const m = Math.floor(segundos/60).toString().padStart(2,'0');
+            const s = (segundos%60).toString().padStart(2,'0');
             statusGravacao.textContent = `🔴 Gravando ${m}:${s}`;
         }, 1000);
-    } catch { alert('Microfone bloqueado. Permita no navegador (ícone de cadeado na URL).'); }
+    } catch (erro) {
+        alert('Microfone bloqueado. Permita no navegador (ícone de cadeado na URL).');
+    }
 }
 
-function pararGravacao() { if (mediaRecorder?.state === 'recording') mediaRecorder.stop(); }
+function pararGravacao() {
+    if (!scriptProcessor) return;
+    clearInterval(timerGravacao);
+    scriptProcessor.disconnect();
+    if (audioContext) audioContext.close();
+    if (streamGravacao) streamGravacao.getTracks().forEach(t => t.stop());
+
+    // Monta o arquivo WAV
+    const sampleRate = audioContext?.sampleRate || 44100;
+    const numChannels = 1;
+    const bitsPerSample = 16;
+    const buffer = mergeBuffers(chunksWav, sampleRate);
+    const wavBlob = encodeWAV(buffer, sampleRate, numChannels, bitsPerSample);
+
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+        adicionarArquivo(`Gravacao_${Date.now()}.wav`, 'audio/wav', ev.target.result);
+    };
+    reader.readAsDataURL(wavBlob);
+
+    btnGravar.style.display = 'inline-flex';
+    btnParar.style.display = 'none';
+    statusGravacao.textContent = '';
+    segundos = 0;
+    chunksWav = [];
+    audioContext = null;
+    scriptProcessor = null;
+    streamGravacao = null;
+}
+
+function mergeBuffers(chunks, sampleRate) {
+    // Calcula tamanho total
+    let length = 0;
+    chunks.forEach(chunk => length += chunk.length);
+    const result = new Int16Array(length);
+    let offset = 0;
+    chunks.forEach(chunk => {
+        result.set(chunk, offset);
+        offset += chunk.length;
+    });
+    return result;
+}
+
+function encodeWAV(samples, sampleRate, numChannels, bitsPerSample) {
+    const dataLength = samples.length * (bitsPerSample / 8);
+    const buffer = new ArrayBuffer(44 + dataLength);
+    const view = new DataView(buffer);
+
+    // Escreve cabeçalho WAV
+    writeString(view, 0, 'RIFF');
+    view.setUint32(4, 36 + dataLength, true);
+    writeString(view, 8, 'WAVE');
+    writeString(view, 12, 'fmt ');
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true); // PCM
+    view.setUint16(22, numChannels, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * numChannels * bitsPerSample / 8, true);
+    view.setUint16(32, numChannels * bitsPerSample / 8, true);
+    view.setUint16(34, bitsPerSample, true);
+    writeString(view, 36, 'data');
+    view.setUint32(40, dataLength, true);
+
+    // Escreve dados PCM
+    let offset = 44;
+    for (let i = 0; i < samples.length; i++, offset += 2) {
+        view.setInt16(offset, samples[i], true);
+    }
+    return new Blob([view], { type: 'audio/wav' });
+}
+
+function writeString(view, offset, string) {
+    for (let i = 0; i < string.length; i++) {
+        view.setUint8(offset + i, string.charCodeAt(i));
+    }
+}
+
 btnGravar.addEventListener('click', iniciarGravacao);
 btnParar.addEventListener('click', pararGravacao);
 
@@ -381,11 +460,10 @@ window.compartilharAnexoIndividual = async (nome, tipo, dados) => {
     const blob = new Blob([buf], {type: tipo});
     const file = new File([blob], nome, {type: tipo});
 
-    // Tentar compartilhar como arquivo
     if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
-        try { await navigator.share({ files: [file], title: nome }); return; } catch (e) { if (e.name !== 'AbortError') console.error(e); }
+        try { await navigator.share({ files: [file], title: nome }); return; }
+        catch (e) { if (e.name !== 'AbortError') console.error(e); }
     }
-    // Fallback: se falhar (especialmente áudio), baixar e sugerir envio manual
     window.baixarAnexo(nome, tipo, dados);
     alert('O arquivo foi baixado. Agora você pode enviá-lo manualmente pelo WhatsApp.');
 };
@@ -423,4 +501,4 @@ if ('serviceWorker' in navigator) {
 }
 </script>
 </body>
-</html>
+    </html>
