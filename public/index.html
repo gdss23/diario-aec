@@ -89,417 +89,452 @@
 </div>
 
 <script>
-    // ---------- Armazenamento (localStorage) ----------
-    const STORAGE_KEY = 'diario_provas_v3';
+// ========== IndexedDB (substitui localStorage) ==========
+const DB_NAME = 'DiarioProvasDB';
+const STORE_NAME = 'anotacoes';
+let db = null;
 
-    function carregarAnotacoes() {
-        try {
-            const dados = localStorage.getItem(STORAGE_KEY);
-            if (!dados) return [];
-            const parsed = JSON.parse(dados);
-            return Array.isArray(parsed) ? parsed : [];
-        } catch (e) {
-            localStorage.removeItem(STORAGE_KEY);
-            return [];
-        }
-    }
-
-    function salvarAnotacoes(lista) {
-        try {
-            const json = JSON.stringify(lista);
-            localStorage.setItem(STORAGE_KEY, json);
-            return true;
-        } catch (e) {
-            if (e.name === 'QuotaExceededError' || e.code === 22 || e.message.includes('quota')) {
-                throw new Error('Armazenamento cheio. Remova anexos antigos no histórico.');
+function abrirDB() {
+    return new Promise((resolve, reject) => {
+        if (db) return resolve(db);
+        const request = indexedDB.open(DB_NAME, 1);
+        request.onupgradeneeded = (event) => {
+            const database = event.target.result;
+            if (!database.objectStoreNames.contains(STORE_NAME)) {
+                database.createObjectStore(STORE_NAME, { keyPath: 'id' });
             }
-            throw new Error('Erro ao acessar o armazenamento.');
-        }
-    }
+        };
+        request.onsuccess = (event) => {
+            db = event.target.result;
+            resolve(db);
+        };
+        request.onerror = (event) => reject(event.target.error);
+    });
+}
 
-    // ---------- Estado atual ----------
-    let arquivosAtuais = []; // { nome, tipo, dadosBase64 }
+async function carregarAnotacoes() {
+    const db = await abrirDB();
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction(STORE_NAME, 'readonly');
+        const store = tx.objectStore(STORE_NAME);
+        const request = store.getAll();
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+    });
+}
 
-    // Elementos DOM
-    const inputArquivos = document.getElementById('input-arquivos');
-    const inputCamera = document.getElementById('input-camera');
-    const btnAnexar = document.getElementById('btn-anexar');
-    const btnCamera = document.getElementById('btn-camera');
-    const btnGravar = document.getElementById('btn-gravar');
-    const btnParar = document.getElementById('btn-parar');
-    const statusGravacao = document.getElementById('status-gravacao');
-    const previewDiv = document.getElementById('preview');
-    const btnSalvar = document.getElementById('btn-salvar');
-    const btnLimpar = document.getElementById('btn-limpar');
-    const historyDiv = document.getElementById('history');
-    const dataInput = document.getElementById('data');
-    const horaInput = document.getElementById('hora');
-    const descricaoInput = document.getElementById('descricao');
-    const linksInput = document.getElementById('links');
-
-    // ---------- Prévia ----------
-    function atualizarPreview() {
-        previewDiv.innerHTML = '';
-        if (arquivosAtuais.length === 0) {
-            previewDiv.innerHTML = '<span style="color:#888;">Nenhum anexo</span>';
-            return;
-        }
-        arquivosAtuais.forEach((arq, idx) => {
-            const div = document.createElement('div');
-            div.className = 'preview-item';
-            let elemento;
-            if (arq.tipo.startsWith('image/')) {
-                elemento = document.createElement('img');
-                elemento.src = arq.dadosBase64;
-            } else if (arq.tipo.startsWith('video/')) {
-                elemento = document.createElement('video');
-                elemento.src = arq.dadosBase64;
-                elemento.controls = true;
-                elemento.muted = true;
-            } else if (arq.tipo.startsWith('audio/')) {
-                elemento = document.createElement('audio');
-                elemento.src = arq.dadosBase64;
-                elemento.controls = true;
-            } else {
-                elemento = document.createElement('span');
-                elemento.textContent = '📄 ' + arq.nome;
+async function salvarAnotacoes(lista) {
+    const db = await abrirDB();
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction(STORE_NAME, 'readwrite');
+        const store = tx.objectStore(STORE_NAME);
+        // Limpa tudo e insere a nova lista
+        store.clear().onsuccess = () => {
+            let contador = 0;
+            if (lista.length === 0) {
+                resolve(true);
+                return;
             }
-            div.appendChild(elemento);
-            const btnRem = document.createElement('button');
-            btnRem.className = 'remove';
-            btnRem.textContent = '×';
-            btnRem.onclick = () => { arquivosAtuais.splice(idx,1); atualizarPreview(); };
-            div.appendChild(btnRem);
-            previewDiv.appendChild(div);
-        });
-    }
-
-    function adicionarArquivo(nome, tipo, dadosBase64) {
-        arquivosAtuais.push({ nome, tipo, dadosBase64 });
-        atualizarPreview();
-    }
-
-    // ---------- Redimensionador de imagem ----------
-    function redimensionarImagem(file, maxWidth = 800, qualidade = 0.6) {
-        return new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = (e) => {
-                const img = new Image();
-                img.onload = () => {
-                    let width = img.width;
-                    let height = img.height;
-                    if (width > maxWidth) {
-                        height = (height * maxWidth) / width;
-                        width = maxWidth;
-                    }
-                    const canvas = document.createElement('canvas');
-                    canvas.width = width;
-                    canvas.height = height;
-                    const ctx = canvas.getContext('2d');
-                    ctx.drawImage(img, 0, 0, width, height);
-                    canvas.toBlob((blob) => {
-                        const reader2 = new FileReader();
-                        reader2.onloadend = () => resolve(reader2.result);
-                        reader2.readAsDataURL(blob);
-                    }, 'image/jpeg', qualidade);
+            lista.forEach(item => {
+                const req = store.add(item);
+                req.onsuccess = () => {
+                    contador++;
+                    if (contador === lista.length) resolve(true);
                 };
-                img.src = e.target.result;
-            };
-            reader.readAsDataURL(file);
-        });
+                req.onerror = (e) => reject(e.target.error);
+            });
+        };
+    });
+}
+
+async function excluirAnotacaoDB(id) {
+    const db = await abrirDB();
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction(STORE_NAME, 'readwrite');
+        const store = tx.objectStore(STORE_NAME);
+        store.delete(id).onsuccess = () => resolve();
+        store.delete(id).onerror = (e) => reject(e.target.error);
+    });
+}
+// ========== Fim da mudança ==========
+
+// ---------- Estado atual ----------
+let arquivosAtuais = []; // { nome, tipo, dadosBase64 }
+
+// Elementos DOM
+const inputArquivos = document.getElementById('input-arquivos');
+const inputCamera = document.getElementById('input-camera');
+const btnAnexar = document.getElementById('btn-anexar');
+const btnCamera = document.getElementById('btn-camera');
+const btnGravar = document.getElementById('btn-gravar');
+const btnParar = document.getElementById('btn-parar');
+const statusGravacao = document.getElementById('status-gravacao');
+const previewDiv = document.getElementById('preview');
+const btnSalvar = document.getElementById('btn-salvar');
+const btnLimpar = document.getElementById('btn-limpar');
+const historyDiv = document.getElementById('history');
+const dataInput = document.getElementById('data');
+const horaInput = document.getElementById('hora');
+const descricaoInput = document.getElementById('descricao');
+const linksInput = document.getElementById('links');
+
+// ---------- Prévia ----------
+function atualizarPreview() {
+    previewDiv.innerHTML = '';
+    if (arquivosAtuais.length === 0) {
+        previewDiv.innerHTML = '<span style="color:#888;">Nenhum anexo</span>';
+        return;
     }
+    arquivosAtuais.forEach((arq, idx) => {
+        const div = document.createElement('div');
+        div.className = 'preview-item';
+        let elemento;
+        if (arq.tipo.startsWith('image/')) {
+            elemento = document.createElement('img');
+            elemento.src = arq.dadosBase64;
+        } else if (arq.tipo.startsWith('video/')) {
+            elemento = document.createElement('video');
+            elemento.src = arq.dadosBase64;
+            elemento.controls = true;
+            elemento.muted = true;
+        } else if (arq.tipo.startsWith('audio/')) {
+            elemento = document.createElement('audio');
+            elemento.src = arq.dadosBase64;
+            elemento.controls = true;
+        } else {
+            elemento = document.createElement('span');
+            elemento.textContent = '📄 ' + arq.nome;
+        }
+        div.appendChild(elemento);
+        const btnRem = document.createElement('button');
+        btnRem.className = 'remove';
+        btnRem.textContent = '×';
+        btnRem.onclick = () => { arquivosAtuais.splice(idx,1); atualizarPreview(); };
+        div.appendChild(btnRem);
+        previewDiv.appendChild(div);
+    });
+}
 
-    // ---------- Anexar e câmera ----------
-    btnAnexar.addEventListener('click', () => inputArquivos.click());
-    btnCamera.addEventListener('click', () => inputCamera.click());
+function adicionarArquivo(nome, tipo, dadosBase64) {
+    arquivosAtuais.push({ nome, tipo, dadosBase64 });
+    atualizarPreview();
+}
 
-    inputArquivos.addEventListener('change', async (e) => {
-        const files = Array.from(e.target.files);
-        if (!files.length) return;
-        for (const file of files) {
-            if (file.type.startsWith('image/')) {
-                try {
-                    const base64 = await redimensionarImagem(file);
-                    adicionarArquivo(file.name, 'image/jpeg', base64);
-                } catch {
-                    const reader = new FileReader();
-                    reader.onload = (ev) => adicionarArquivo(file.name, file.type, ev.target.result);
-                    reader.readAsDataURL(file);
+// ---------- Redimensionar imagem ----------
+function redimensionarImagem(file, maxWidth = 800, qualidade = 0.6) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            const img = new Image();
+            img.onload = () => {
+                let width = img.width;
+                let height = img.height;
+                if (width > maxWidth) {
+                    height = (height * maxWidth) / width;
+                    width = maxWidth;
                 }
-            } else {
+                const canvas = document.createElement('canvas');
+                canvas.width = width;
+                canvas.height = height;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(img, 0, 0, width, height);
+                canvas.toBlob((blob) => {
+                    const reader2 = new FileReader();
+                    reader2.onloadend = () => resolve(reader2.result);
+                    reader2.readAsDataURL(blob);
+                }, 'image/jpeg', qualidade);
+            };
+            img.src = e.target.result;
+        };
+        reader.readAsDataURL(file);
+    });
+}
+
+// ---------- Anexar e câmera ----------
+btnAnexar.addEventListener('click', () => inputArquivos.click());
+btnCamera.addEventListener('click', () => inputCamera.click());
+
+inputArquivos.addEventListener('change', async (e) => {
+    const files = Array.from(e.target.files);
+    if (!files.length) return;
+    for (const file of files) {
+        if (file.type.startsWith('image/')) {
+            try {
+                const base64 = await redimensionarImagem(file);
+                adicionarArquivo(file.name, 'image/jpeg', base64);
+            } catch {
                 const reader = new FileReader();
                 reader.onload = (ev) => adicionarArquivo(file.name, file.type, ev.target.result);
                 reader.readAsDataURL(file);
             }
-        }
-        inputArquivos.value = '';
-    });
-
-    inputCamera.addEventListener('change', async (e) => {
-        const file = e.target.files[0];
-        if (!file) return;
-        try {
-            const base64 = await redimensionarImagem(file);
-            adicionarArquivo('Foto_' + new Date().toISOString().slice(0,19).replace(/:/g,'-') + '.jpg', 'image/jpeg', base64);
-        } catch {
+        } else {
             const reader = new FileReader();
-            reader.onload = (ev) => adicionarArquivo('Foto_' + new Date().toISOString().slice(0,19).replace(/:/g,'-') + '.jpg', 'image/jpeg', ev.target.result);
+            reader.onload = (ev) => adicionarArquivo(file.name, file.type, ev.target.result);
             reader.readAsDataURL(file);
         }
-        inputCamera.value = '';
-    });
-
-    // ---------- Gravação com contador de tempo ----------
-    let mediaRecorder = null;
-    let audioChunks = [];
-    let streamGravacao = null;
-    let timerGravacao = null;
-    let segundos = 0;
-
-    function atualizarTempo() {
-        segundos++;
-        const mins = Math.floor(segundos / 60).toString().padStart(2, '0');
-        const secs = (segundos % 60).toString().padStart(2, '0');
-        statusGravacao.textContent = `🔴 Gravando ${mins}:${secs}`;
     }
+    inputArquivos.value = '';
+});
 
-    async function iniciarGravacao() {
-        if (!navigator.mediaDevices?.getUserMedia) {
-            alert('Gravação não suportada. Use o Chrome.');
-            return;
-        }
-        try {
-            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            streamGravacao = stream;
-            mediaRecorder = new MediaRecorder(stream);
-            audioChunks = [];
-
-            mediaRecorder.ondataavailable = (e) => {
-                if (e.data.size > 0) audioChunks.push(e.data);
-            };
-
-            mediaRecorder.onstop = () => {
-                clearInterval(timerGravacao);
-                if (audioChunks.length === 0) {
-                    statusGravacao.textContent = '';
-                    return;
-                }
-                const blob = new Blob(audioChunks, { type: 'audio/webm' });
-                const reader = new FileReader();
-                reader.onload = (ev) => {
-                    adicionarArquivo('Gravação_' + new Date().toISOString().slice(0,19).replace(/:/g,'-') + '.webm', 'audio/webm', ev.target.result);
-                };
-                reader.readAsDataURL(blob);
-                stream.getTracks().forEach(t => t.stop());
-                btnGravar.style.display = 'inline-flex';
-                btnParar.style.display = 'none';
-                statusGravacao.textContent = '';
-                segundos = 0;
-            };
-
-            mediaRecorder.start();
-            btnGravar.style.display = 'none';
-            btnParar.style.display = 'inline-flex';
-            segundos = 0;
-            statusGravacao.textContent = '🔴 Gravando 00:00';
-            timerGravacao = setInterval(atualizarTempo, 1000);
-        } catch (erro) {
-            alert('Microfone bloqueado. Permita no navegador (ícone de cadeado na URL).');
-        }
+inputCamera.addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    try {
+        const base64 = await redimensionarImagem(file);
+        adicionarArquivo('Foto_' + new Date().toISOString().slice(0,19).replace(/:/g,'-') + '.jpg', 'image/jpeg', base64);
+    } catch {
+        const reader = new FileReader();
+        reader.onload = (ev) => adicionarArquivo('Foto_' + new Date().toISOString().slice(0,19).replace(/:/g,'-') + '.jpg', 'image/jpeg', ev.target.result);
+        reader.readAsDataURL(file);
     }
+    inputCamera.value = '';
+});
 
-    function pararGravacao() {
-        if (mediaRecorder && mediaRecorder.state === 'recording') {
-            mediaRecorder.stop();
-        }
+// ---------- Gravação com contador de tempo ----------
+let mediaRecorder = null;
+let audioChunks = [];
+let streamGravacao = null;
+let timerGravacao = null;
+let segundos = 0;
+
+function atualizarTempo() {
+    segundos++;
+    const mins = Math.floor(segundos / 60).toString().padStart(2, '0');
+    const secs = (segundos % 60).toString().padStart(2, '0');
+    statusGravacao.textContent = `🔴 Gravando ${mins}:${secs}`;
+}
+
+async function iniciarGravacao() {
+    if (!navigator.mediaDevices?.getUserMedia) {
+        alert('Gravação não suportada. Use o Chrome.');
+        return;
     }
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        streamGravacao = stream;
+        mediaRecorder = new MediaRecorder(stream);
+        audioChunks = [];
 
-    btnGravar.addEventListener('click', iniciarGravacao);
-    btnParar.addEventListener('click', pararGravacao);
-
-    // ---------- Salvar ----------
-    btnSalvar.addEventListener('click', async () => {
-        const data = dataInput.value;
-        const hora = horaInput.value;
-        const descricao = descricaoInput.value.trim();
-        const links = linksInput.value.trim();
-
-        if (!data || !hora || !descricao) {
-            alert('Preencha data, hora e descrição.');
-            return;
-        }
-
-        btnSalvar.disabled = true;
-        btnSalvar.textContent = '⏳ Salvando...';
-
-        const novoItem = {
-            id: Date.now(),
-            data, hora, descricao, links,
-            arquivos: arquivosAtuais.slice()
+        mediaRecorder.ondataavailable = (e) => {
+            if (e.data.size > 0) audioChunks.push(e.data);
         };
 
-        setTimeout(() => {
-            try {
-                const lista = carregarAnotacoes();
-                lista.push(novoItem);
-                if (salvarAnotacoes(lista)) {
-                    limparFormulario();
-                    renderizarHistorico();
-                    alert('✅ Salvo!');
-                }
-            } catch (erro) {
-                alert('Erro ao salvar: ' + erro.message);
-                console.error(erro);
-            } finally {
-                btnSalvar.disabled = false;
-                btnSalvar.textContent = '💾 Salvar';
+        mediaRecorder.onstop = () => {
+            clearInterval(timerGravacao);
+            if (audioChunks.length === 0) {
+                statusGravacao.textContent = '';
+                return;
             }
-        }, 50);
-    });
+            const blob = new Blob(audioChunks, { type: 'audio/webm' });
+            const reader = new FileReader();
+            reader.onload = (ev) => {
+                adicionarArquivo('Gravação_' + new Date().toISOString().slice(0,19).replace(/:/g,'-') + '.webm', 'audio/webm', ev.target.result);
+            };
+            reader.readAsDataURL(blob);
+            stream.getTracks().forEach(t => t.stop());
+            btnGravar.style.display = 'inline-flex';
+            btnParar.style.display = 'none';
+            statusGravacao.textContent = '';
+            segundos = 0;
+        };
 
-    btnLimpar.addEventListener('click', limparFormulario);
+        mediaRecorder.start();
+        btnGravar.style.display = 'none';
+        btnParar.style.display = 'inline-flex';
+        segundos = 0;
+        statusGravacao.textContent = '🔴 Gravando 00:00';
+        timerGravacao = setInterval(atualizarTempo, 1000);
+    } catch (erro) {
+        alert('Microfone bloqueado. Permita no navegador (ícone de cadeado na URL).');
+    }
+}
 
-    function limparFormulario() {
-        arquivosAtuais = [];
-        atualizarPreview();
-        descricaoInput.value = '';
-        linksInput.value = '';
-        const agora = new Date();
-        dataInput.value = agora.toISOString().split('T')[0];
-        horaInput.value = agora.toTimeString().slice(0,5);
+function pararGravacao() {
+    if (mediaRecorder && mediaRecorder.state === 'recording') {
+        mediaRecorder.stop();
+    }
+}
+
+btnGravar.addEventListener('click', iniciarGravacao);
+btnParar.addEventListener('click', pararGravacao);
+
+// ---------- Salvar ----------
+btnSalvar.addEventListener('click', async () => {
+    const data = dataInput.value;
+    const hora = horaInput.value;
+    const descricao = descricaoInput.value.trim();
+    const links = linksInput.value.trim();
+
+    if (!data || !hora || !descricao) {
+        alert('Preencha data, hora e descrição.');
+        return;
     }
 
-    // ---------- Histórico ----------
-    function renderizarHistorico() {
-        const lista = carregarAnotacoes();
-        historyDiv.innerHTML = '<h3 style="margin-bottom:10px;">📋 Histórico</h3>';
-        if (lista.length === 0) {
-            historyDiv.innerHTML += '<p style="color:gray;">Nenhum registro.</p>';
-            return;
+    btnSalvar.disabled = true;
+    btnSalvar.textContent = '⏳ Salvando...';
+
+    const novoItem = {
+        id: Date.now(),
+        data, hora, descricao, links,
+        arquivos: arquivosAtuais.slice()
+    };
+
+    try {
+        const lista = await carregarAnotacoes();
+        lista.push(novoItem);
+        await salvarAnotacoes(lista);
+        limparFormulario();
+        await renderizarHistorico();
+        alert('✅ Salvo!');
+    } catch (erro) {
+        alert('Erro ao salvar: ' + erro.message);
+        console.error(erro);
+    } finally {
+        btnSalvar.disabled = false;
+        btnSalvar.textContent = '💾 Salvar';
+    }
+});
+
+btnLimpar.addEventListener('click', limparFormulario);
+
+function limparFormulario() {
+    arquivosAtuais = [];
+    atualizarPreview();
+    descricaoInput.value = '';
+    linksInput.value = '';
+    const agora = new Date();
+    dataInput.value = agora.toISOString().split('T')[0];
+    horaInput.value = agora.toTimeString().slice(0,5);
+}
+
+// ---------- Histórico ----------
+async function renderizarHistorico() {
+    const lista = await carregarAnotacoes();
+    historyDiv.innerHTML = '<h3 style="margin-bottom:10px;">📋 Histórico</h3>';
+    if (lista.length === 0) {
+        historyDiv.innerHTML += '<p style="color:gray;">Nenhum registro.</p>';
+        return;
+    }
+
+    lista.reverse().forEach(item => {
+        const card = document.createElement('div');
+        card.className = 'card';
+
+        let html = `<div class="date">📅 ${item.data} às ⏰ ${item.hora}</div>`;
+        html += `<div class="desc"><strong>Ocorrência:</strong><br>${item.descricao.replace(/\n/g, '<br>')}</div>`;
+        if (item.links) {
+            html += `<div class="links"><strong>🔗 Links:</strong><br>${item.links.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank">$1</a>')}</div>`;
         }
 
-        lista.reverse().forEach(item => {
-            const card = document.createElement('div');
-            card.className = 'card';
-
-            let html = `<div class="date">📅 ${item.data} às ⏰ ${item.hora}</div>`;
-            html += `<div class="desc"><strong>Ocorrência:</strong><br>${item.descricao.replace(/\n/g, '<br>')}</div>`;
-            if (item.links) {
-                html += `<div class="links"><strong>🔗 Links:</strong><br>${item.links.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank">$1</a>')}</div>`;
-            }
-
-            if (item.arquivos && item.arquivos.length > 0) {
-                html += '<div class="anexos-grid">';
-                item.arquivos.forEach(arq => {
-                    html += '<div class="anexo-box">';
-                    if (arq.tipo.startsWith('image/')) {
-                        html += `<img src="${arq.dadosBase64}" alt="${arq.nome}" onclick="window.open('${arq.dadosBase64}')" style="cursor:pointer;">`;
-                    } else if (arq.tipo.startsWith('video/')) {
-                        html += `<video src="${arq.dadosBase64}" controls muted></video>`;
-                    } else if (arq.tipo.startsWith('audio/')) {
-                        html += `<audio src="${arq.dadosBase64}" controls></audio>`;
-                    } else {
-                        html += `📄 ${arq.nome}`;
-                    }
-                    html += `<div class="btn-row-anexo">
-                                <button class="btn-download" onclick="baixarAnexo('${arq.nome}', '${arq.tipo}', '${arq.dadosBase64}')">⬇️ Baixar</button>
-                                <button class="btn-share-anexo" onclick="compartilharAnexoIndividual('${arq.nome}', '${arq.tipo}', '${arq.dadosBase64}')">📤 Compartilhar</button>
-                             </div>`;
-                    html += '</div>';
-                });
+        if (item.arquivos && item.arquivos.length > 0) {
+            html += '<div class="anexos-grid">';
+            item.arquivos.forEach(arq => {
+                html += '<div class="anexo-box">';
+                if (arq.tipo.startsWith('image/')) {
+                    html += `<img src="${arq.dadosBase64}" alt="${arq.nome}" onclick="window.open('${arq.dadosBase64}')" style="cursor:pointer;">`;
+                } else if (arq.tipo.startsWith('video/')) {
+                    html += `<video src="${arq.dadosBase64}" controls muted></video>`;
+                } else if (arq.tipo.startsWith('audio/')) {
+                    html += `<audio src="${arq.dadosBase64}" controls></audio>`;
+                } else {
+                    html += `📄 ${arq.nome}`;
+                }
+                html += `<div class="btn-row-anexo">
+                            <button class="btn-download" onclick="baixarAnexo('${arq.nome}', '${arq.tipo}', '${arq.dadosBase64}')">⬇️ Baixar</button>
+                            <button class="btn-share-anexo" onclick="compartilharAnexoIndividual('${arq.nome}', '${arq.tipo}', '${arq.dadosBase64}')">📤 Compartilhar</button>
+                         </div>`;
                 html += '</div>';
-            }
+            });
+            html += '</div>';
+        }
 
-            html += `<div class="card-actions">
-                        <button class="btn btn-blue" onclick="compartilharAnotacao(${item.id})">📤 Compartilhar texto</button>
-                        <button class="btn btn-gray" onclick="copiarAnotacao(${item.id})">📋 Copiar</button>
-                        <button class="btn btn-red" onclick="excluirAnotacao(${item.id})">🗑️ Excluir</button>
-                     </div>`;
+        html += `<div class="card-actions">
+                    <button class="btn btn-blue" onclick="compartilharAnotacao(${item.id})">📤 Compartilhar texto</button>
+                    <button class="btn btn-gray" onclick="copiarAnotacao(${item.id})">📋 Copiar</button>
+                    <button class="btn btn-red" onclick="excluirAnotacao(${item.id})">🗑️ Excluir</button>
+                 </div>`;
 
-            card.innerHTML = html;
-            historyDiv.appendChild(card);
-        });
-    }
+        card.innerHTML = html;
+        historyDiv.appendChild(card);
+    });
+}
 
-    // ---------- Funções globais para histórico ----------
-    window.baixarAnexo = function(nome, tipo, dadosBase64) {
+// ---------- Funções globais para histórico ----------
+window.baixarAnexo = function(nome, tipo, dadosBase64) {
+    const byteString = atob(dadosBase64.split(',')[1]);
+    const ab = new ArrayBuffer(byteString.length);
+    const ia = new Uint8Array(ab);
+    for (let i = 0; i < byteString.length; i++) ia[i] = byteString.charCodeAt(i);
+    const blob = new Blob([ab], { type: tipo });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = nome;
+    a.click();
+    URL.revokeObjectURL(url);
+};
+
+window.compartilharAnexoIndividual = async function(nome, tipo, dadosBase64) {
+    try {
         const byteString = atob(dadosBase64.split(',')[1]);
         const ab = new ArrayBuffer(byteString.length);
         const ia = new Uint8Array(ab);
         for (let i = 0; i < byteString.length; i++) ia[i] = byteString.charCodeAt(i);
         const blob = new Blob([ab], { type: tipo });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = nome;
-        a.click();
-        URL.revokeObjectURL(url);
-    };
+        const file = new File([blob], nome, { type: tipo });
 
-    window.compartilharAnexoIndividual = async function(nome, tipo, dadosBase64) {
-        try {
-            const byteString = atob(dadosBase64.split(',')[1]);
-            const ab = new ArrayBuffer(byteString.length);
-            const ia = new Uint8Array(ab);
-            for (let i = 0; i < byteString.length; i++) ia[i] = byteString.charCodeAt(i);
-            const blob = new Blob([ab], { type: tipo });
-            const file = new File([blob], nome, { type: tipo });
-
-            if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
-                await navigator.share({ files: [file], title: nome });
-            } else if (navigator.share) {
-                await navigator.share({ text: `Segue anexo: ${nome}` });
-            } else {
-                alert('Compartilhamento não suportado. Use o botão "Baixar" para salvar e enviar manualmente.');
-            }
-        } catch (e) {
-            if (e.name !== 'AbortError') {
-                alert('Não foi possível compartilhar este arquivo.');
-                console.error(e);
-            }
-        }
-    };
-
-    window.compartilharAnotacao = async function(id) {
-        const lista = carregarAnotacoes();
-        const anotacao = lista.find(a => a.id === id);
-        if (!anotacao) return;
-
-        let texto = `📅 ${anotacao.data} às ${anotacao.hora}\n${anotacao.descricao}`;
-        if (anotacao.links) texto += `\n🔗 ${anotacao.links}`;
-
-        if (navigator.share) {
-            try {
-                await navigator.share({ text: texto });
-            } catch (e) {
-                // usuário cancelou
-            }
+        if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
+            await navigator.share({ files: [file], title: nome });
+        } else if (navigator.share) {
+            await navigator.share({ text: `Segue anexo: ${nome}` });
         } else {
-            alert('Compartilhamento indisponível. Use os botões "Compartilhar" individuais nos anexos para enviar mídia.');
+            alert('Compartilhamento não suportado. Use o botão "Baixar" para salvar e enviar manualmente.');
         }
-    };
+    } catch (e) {
+        if (e.name !== 'AbortError') {
+            alert('Não foi possível compartilhar este arquivo.');
+            console.error(e);
+        }
+    }
+};
 
-    window.copiarAnotacao = function(id) {
-        const lista = carregarAnotacoes();
-        const anotacao = lista.find(a => a.id === id);
-        if (!anotacao) return;
-        let texto = `📅 ${anotacao.data} às ${anotacao.hora}\n${anotacao.descricao}`;
-        if (anotacao.links) texto += `\n🔗 ${anotacao.links}`;
-        navigator.clipboard.writeText(texto).then(() => alert('Copiado!')).catch(() => alert('Erro ao copiar.'));
-    };
+window.compartilharAnotacao = async function(id) {
+    const lista = await carregarAnotacoes();
+    const anotacao = lista.find(a => a.id === id);
+    if (!anotacao) return;
 
-    window.excluirAnotacao = function(id) {
-        if (!confirm('Excluir esta anotação?')) return;
-        const lista = carregarAnotacoes().filter(a => a.id !== id);
-        salvarAnotacoes(lista);
-        renderizarHistorico();
-    };
+    let texto = `📅 ${anotacao.data} às ${anotacao.hora}\n${anotacao.descricao}`;
+    if (anotacao.links) texto += `\n🔗 ${anotacao.links}`;
 
-    // ---------- Inicialização ----------
-    const agora = new Date();
-    dataInput.value = agora.toISOString().split('T')[0];
-    horaInput.value = agora.toTimeString().slice(0,5);
+    if (navigator.share) {
+        try {
+            await navigator.share({ text: texto });
+        } catch (e) {}
+    } else {
+        alert('Compartilhamento indisponível. Use os botões "Compartilhar" individuais nos anexos para enviar mídia.');
+    }
+};
+
+window.copiarAnotacao = async function(id) {
+    const lista = await carregarAnotacoes();
+    const anotacao = lista.find(a => a.id === id);
+    if (!anotacao) return;
+    let texto = `📅 ${anotacao.data} às ${anotacao.hora}\n${anotacao.descricao}`;
+    if (anotacao.links) texto += `\n🔗 ${anotacao.links}`;
+    navigator.clipboard.writeText(texto).then(() => alert('Copiado!')).catch(() => alert('Erro ao copiar.'));
+};
+
+window.excluirAnotacao = async function(id) {
+    if (!confirm('Excluir esta anotação?')) return;
+    await excluirAnotacaoDB(id);
     renderizarHistorico();
+};
+
+// ---------- Inicialização ----------
+const agora = new Date();
+dataInput.value = agora.toISOString().split('T')[0];
+horaInput.value = agora.toTimeString().slice(0,5);
+renderizarHistorico();
 </script>
 <script>
 if ('serviceWorker' in navigator) {
@@ -509,4 +544,4 @@ if ('serviceWorker' in navigator) {
 }
 </script>
 </body>
-</html>
+    </html>
